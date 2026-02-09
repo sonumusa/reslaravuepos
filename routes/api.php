@@ -16,6 +16,11 @@ use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\ExpenseController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\InvoiceController;
+use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\KdsController;
+use App\Http\Controllers\PraController;
+use App\Http\Controllers\SyncController;
 
 // ═══════════════════════════════════════════════════════
 // PUBLIC ROUTES
@@ -47,11 +52,13 @@ Route::middleware('auth:sanctum')->group(function () {
     // ─────────────────────────────────────────────────────
     // CATEGORIES
     // ─────────────────────────────────────────────────────
+    Route::post('categories/reorder', [CategoryController::class, 'reorder']);
     Route::apiResource('categories', CategoryController::class);
 
     // ─────────────────────────────────────────────────────
     // INVENTORY
     // ─────────────────────────────────────────────────────
+    Route::post('inventory/deduct-for-order', [InventoryController::class, 'deductForOrder']);
     Route::apiResource('inventory', InventoryController::class);
     Route::post('inventory/{id}/adjust', [InventoryController::class, 'adjust']);
     
@@ -75,6 +82,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('reports/items-sold', [ReportController::class, 'itemsSold']);
     Route::get('reports/payment-methods', [ReportController::class, 'paymentMethods']);
     Route::get('reports/staff-performance', [ReportController::class, 'staffPerformance']);
+    Route::get('reports/cashier-summary', [ReportController::class, 'cashierSummary']);
+    Route::get('reports/waiter-summary', [ReportController::class, 'waiterSummary']);
+    Route::get('reports/tax-summary', [ReportController::class, 'taxSummary']);
+    Route::get('reports/pra-status', [ReportController::class, 'praStatus']);
 
     // ─────────────────────────────────────────────────────
     // MENU ITEMS
@@ -87,8 +98,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // ─────────────────────────────────────────────────────
     // MODIFIERS
     // ─────────────────────────────────────────────────────
-    Route::apiResource('modifiers', ModifierController::class);
     Route::get('modifiers/groups', [ModifierController::class, 'groups']);
+    Route::apiResource('modifiers', ModifierController::class);
 
     // ─────────────────────────────────────────────────────
     // DAILY SPECIALS
@@ -124,18 +135,20 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('orders/{order}/hold', [OrderController::class, 'hold']);
     Route::post('orders/{order}/resume', [OrderController::class, 'resume']);
     Route::post('orders/{order}/ready', [OrderController::class, 'ready']);
+    Route::post('orders/{order}/served', [OrderController::class, 'served']);
     Route::post('orders/{order}/complete', [OrderController::class, 'complete']);
     Route::post('orders/{order}/cancel', [OrderController::class, 'cancel']);
     Route::post('orders/{order}/void', [OrderController::class, 'void']);
+    Route::post('orders/{order}/pay', [OrderController::class, 'pay']);
 
     // ─────────────────────────────────────────────────────
     // TABLES
     // ─────────────────────────────────────────────────────
-    Route::apiResource('tables', TableController::class);
     Route::get('tables/floors', [TableController::class, 'floors']);
-    Route::put('tables/{table}/status', [TableController::class, 'updateStatus']);
     Route::post('tables/transfer', [TableController::class, 'transfer']);
     Route::post('tables/merge', [TableController::class, 'merge']);
+    Route::apiResource('tables', TableController::class);
+    Route::put('tables/{table}/status', [TableController::class, 'updateStatus']);
 
     // ─────────────────────────────────────────────────────
     // BRANCHES
@@ -166,4 +179,57 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('customers', CustomerController::class);
     Route::get('customers/{customer}/orders', [CustomerController::class, 'orders']);
     Route::post('customers/{customer}/redeem-points', [CustomerController::class, 'redeemPoints']);
+
+    // ─────────────────────────────────────────────────────
+    // INVOICES
+    // ─────────────────────────────────────────────────────
+    Route::get('invoices/pra-pending', [InvoiceController::class, 'praPending']);
+    Route::apiResource('invoices', InvoiceController::class);
+    Route::get('invoices/{invoice}/receipt', [InvoiceController::class, 'receipt']);
+    Route::post('invoices/{invoice}/void', [InvoiceController::class, 'void']);
+    Route::post('invoices/{invoice}/refund', [InvoiceController::class, 'refund']);
+
+    // ─────────────────────────────────────────────────────
+    // PAYMENTS
+    // ─────────────────────────────────────────────────────
+    Route::apiResource('payments', PaymentController::class)->only(['index', 'show', 'store']);
+    Route::post('payments/split', [PaymentController::class, 'split']);
+    Route::post('payments/{payment}/refund', [PaymentController::class, 'refund']);
+
+    // ─────────────────────────────────────────────────────
+    // KDS (Kitchen Display System)
+    // ─────────────────────────────────────────────────────
+    Route::get('kds', [KdsController::class, 'index']);
+    Route::get('kds/stats', [KdsController::class, 'stats']);
+    Route::post('kds/{order}/acknowledge', [KdsController::class, 'acknowledge']);
+    Route::post('kds/{order}/start', [KdsController::class, 'startPreparing']);
+    Route::post('kds/{order}/item/{item}/ready', [KdsController::class, 'itemReady']);
+    Route::post('kds/{order}/bump', [KdsController::class, 'bump']);
+    Route::post('kds/{order}/recall', [KdsController::class, 'recall']);
+
+    // ─────────────────────────────────────────────────────
+    // PRA (Pakistan Revenue Authority) Integration
+    // ─────────────────────────────────────────────────────
+    Route::get('pra/status', [PraController::class, 'status']);
+    Route::get('pra/pending', [PraController::class, 'pending']);
+    Route::get('pra/logs', [PraController::class, 'logs']);
+    Route::post('pra/test-connection', [PraController::class, 'testConnection']);
+    Route::post('pra/submit/{invoice}', [PraController::class, 'submit']);
+    Route::post('pra/retry/{invoice}', [PraController::class, 'retry']);
+    Route::post('pra/retry-all', [PraController::class, 'retryAll']);
+    Route::put('pra/settings', [PraController::class, 'updateSettings']);
+
+    // ─────────────────────────────────────────────────────
+    // SYNC (Offline Data Synchronization)
+    // ─────────────────────────────────────────────────────
+    Route::get('sync/ping', [SyncController::class, 'ping']);
+    Route::get('sync/status', [SyncController::class, 'status']);
+    Route::get('sync/download', [SyncController::class, 'download']);
+    Route::post('sync/upload', [SyncController::class, 'upload']);
+    Route::post('sync/resolve-conflicts', [SyncController::class, 'resolveConflicts']);
+
+    // ─────────────────────────────────────────────────────
+    // TERMINALS
+    // ─────────────────────────────────────────────────────
+    Route::get('terminals', [PosSessionController::class, 'terminals']);
 });

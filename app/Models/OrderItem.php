@@ -19,6 +19,8 @@ class OrderItem extends Model
         'tax_amount' => 'decimal:2',
         'discount_amount' => 'decimal:2',
         'total_amount' => 'decimal:2',
+        'modifiers' => 'array',
+        'ready_at' => 'datetime',
     ];
 
     public function order()

@@ -369,12 +369,39 @@ class OrderController extends Controller
     public function ready($id)
     {
         $order = Order::findOrFail($id);
-        $order->update(['status' => 'ready']);
+        $order->update([
+            'status' => 'ready',
+            'ready_at' => now(),
+        ]);
+
+        // Mark all items as ready
+        $order->items()->update(['status' => 'ready']);
 
         return response()->json([
             'success' => true,
             'message' => 'Order marked as ready',
-            'data' => $order
+            'data' => $order->fresh(['items.menuItem'])
+        ]);
+    }
+
+    /**
+     * Mark order as served
+     */
+    public function served($id)
+    {
+        $order = Order::findOrFail($id);
+        $order->update([
+            'status' => 'served',
+            'served_at' => now(),
+        ]);
+
+        // Mark all items as served
+        $order->items()->update(['status' => 'served']);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Order marked as served',
+            'data' => $order->fresh(['items.menuItem'])
         ]);
     }
 
@@ -517,6 +544,181 @@ class OrderController extends Controller
             'success' => true,
             'data' => $orders
         ]);
+    }
+
+    /**
+     * Process payment for order (creates invoice and processes payment)
+     */
+    public function pay(Request $request, $id)
+    {
+        $request->validate([
+            'payment_method' => 'required|in:cash,card,mobile,split,credit,other',
+            'amount_tendered' => 'nullable|numeric|min:0',
+            'tip' => 'nullable|numeric|min:0',
+            'discount_type' => 'nullable|in:percentage,fixed',
+            'discount_value' => 'nullable|numeric|min:0',
+            'discount_reason' => 'nullable|string',
+            'customer_id' => 'nullable|exists:customers,id',
+        ]);
+
+        $order = Order::with('items.menuItem')->findOrFail($id);
+
+        // Check if order can be paid
+        if (!in_array($order->status, ['open', 'ready', 'served', 'completed'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Order cannot be paid in current status: ' . $order->status
+            ], 422);
+        }
+
+        // Check if invoice already exists
+        if ($order->invoice && $order->invoice->status === 'paid') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Order has already been paid'
+            ], 422);
+        }
+
+        \Illuminate\Support\Facades\DB::beginTransaction();
+        try {
+            // Calculate totals
+            $subtotal = $order->items->sum('subtotal');
+            $taxRate = $request->user()->branch->gst_rate ?? 16;
+            $taxAmount = round($subtotal * ($taxRate / 100), 2);
+
+            // Calculate discount
+            $discountAmount = 0;
+            if ($request->discount_type && $request->discount_value) {
+                if ($request->discount_type === 'percentage') {
+                    $discountAmount = round($subtotal * ($request->discount_value / 100), 2);
+                } else {
+                    $discountAmount = $request->discount_value;
+                }
+            }
+
+            $totalAmount = $subtotal + $taxAmount - $discountAmount;
+
+            // Create or update invoice
+            $invoice = $order->invoice;
+            if (!$invoice) {
+                $branchCode = $request->user()->branch->code ?? 'BR01';
+                $invoiceNumber = $branchCode . '-' . date('Ymd') . '-' . strtoupper(\Illuminate\Support\Str::random(4));
+                
+                $invoice = \App\Models\Invoice::create([
+                    'uuid' => \Illuminate\Support\Str::uuid(),
+                    'branch_id' => $request->user()->branch_id,
+                    'order_id' => $order->id,
+                    'customer_id' => $request->customer_id ?? $order->customer_id,
+                    'cashier_id' => $request->user()->id,
+                    'pos_session_id' => $request->pos_session_id,
+                    'invoice_number' => $invoiceNumber,
+                    'local_invoice_number' => 'INV-' . date('YmdHis') . '-' . rand(1000, 9999),
+                    'subtotal' => $subtotal,
+                    'discount_amount' => $discountAmount,
+                    'discount_type' => $request->discount_type,
+                    'discount_value' => $request->discount_value,
+                    'discount_reason' => $request->discount_reason,
+                    'tax_amount' => $taxAmount,
+                    'tax_rate' => $taxRate,
+                    'service_charge' => 0,
+                    'tip_amount' => $request->tip ?? 0,
+                    'total_amount' => $totalAmount,
+                    'status' => 'pending',
+                    'pra_status' => config('pra.enabled', true) ? 'pending' : 'not_required',
+                ]);
+
+                // Create invoice items
+                foreach ($order->items as $orderItem) {
+                    \App\Models\InvoiceItem::create([
+                        'invoice_id' => $invoice->id,
+                        'menu_item_id' => $orderItem->menu_item_id,
+                        'quantity' => $orderItem->quantity,
+                        'unit_price' => $orderItem->unit_price,
+                        'subtotal' => $orderItem->subtotal,
+                        'tax_amount' => $orderItem->tax_amount,
+                        'discount_amount' => $orderItem->discount_amount ?? 0,
+                        'total_amount' => $orderItem->total_amount,
+                        'notes' => $orderItem->notes,
+                    ]);
+                }
+            }
+
+            // Calculate change for cash
+            $change = 0;
+            if ($request->payment_method === 'cash' && $request->amount_tendered) {
+                $change = max(0, $request->amount_tendered - $totalAmount);
+            }
+
+            // Create payment record
+            $payment = \App\Models\Payment::create([
+                'uuid' => \Illuminate\Support\Str::uuid(),
+                'invoice_id' => $invoice->id,
+                'pos_session_id' => $request->pos_session_id,
+                'received_by' => $request->user()->id,
+                'payment_number' => 'PAY-' . date('YmdHis') . '-' . rand(1000, 9999),
+                'method' => $request->payment_method,
+                'amount' => $totalAmount,
+                'tip' => $request->tip ?? 0,
+                'tendered' => $request->amount_tendered,
+                'change' => $change,
+                'status' => 'completed',
+            ]);
+
+            // Update invoice
+            $invoice->update([
+                'paid_amount' => $totalAmount,
+                'change_amount' => $change,
+                'status' => 'paid',
+                'paid_at' => now(),
+            ]);
+
+            // Update order
+            $order->update([
+                'status' => 'paid',
+                'completed_at' => now(),
+            ]);
+
+            // Free up table
+            if ($order->table_id) {
+                $order->table->update(['status' => 'available']);
+            }
+
+            // Update customer stats
+            if ($order->customer_id && $order->customer) {
+                $order->customer->increment('total_spent', $totalAmount);
+                $order->customer->increment('total_orders');
+                // Add loyalty points (1 point per 100 spent)
+                $loyaltyPoints = floor($totalAmount / 100);
+                if ($loyaltyPoints > 0) {
+                    $order->customer->increment('loyalty_points', $loyaltyPoints);
+                }
+            }
+
+            // Queue PRA submission
+            if (config('pra.enabled', true)) {
+                \App\Jobs\SubmitInvoiceToPra::dispatch($invoice);
+            }
+
+            \Illuminate\Support\Facades\DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Payment processed successfully',
+                'data' => [
+                    'order' => $order->fresh(['items.menuItem', 'customer', 'table']),
+                    'invoice' => $invoice->fresh(['payments']),
+                    'payment' => $payment,
+                    'change' => $change,
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Payment failed: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**

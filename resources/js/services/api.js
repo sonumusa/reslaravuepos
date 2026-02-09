@@ -172,10 +172,11 @@ export default api;
 // ═══════════════════════════════════════════════════════
 export const authApi = {
     login: (email, password) => api.post('/auth/login', { email, password }),
-    pinLogin: (pin, branchId) => api.post('/auth/pin-login', { pin, branch_id: branchId }),
+    pinLogin: (pin, branchId) => api.post('/auth/login-pin', { pin, branch_id: branchId }),
     logout: () => api.post('/auth/logout'),
     logoutAll: () => api.post('/auth/logout-all'),
     me: () => api.get('/auth/me'),
+    user: () => api.get('/auth/user'),
     updateProfile: (data) => api.put('/auth/profile', data),
     changePassword: (data) => api.post('/auth/change-password', data),
     changePin: (data) => api.post('/auth/change-pin', data),
@@ -245,6 +246,7 @@ export const orderApi = {
     getOrder: (id) => api.get(`/orders/${id}`),
     createOrder: (data) => api.post('/orders', data),
     updateOrder: (id, data) => api.put(`/orders/${id}`, data),
+    deleteOrder: (id) => api.delete(`/orders/${id}`),
     
     // Order items
     addItem: (orderId, data) => api.post(`/orders/${orderId}/items`, data),
@@ -260,6 +262,9 @@ export const orderApi = {
     completeOrder: (id) => api.post(`/orders/${id}/complete`),
     cancelOrder: (id, reason) => api.post(`/orders/${id}/cancel`, { reason }),
     voidOrder: (id, reason, managerPin) => api.post(`/orders/${id}/void`, { reason, manager_pin: managerPin }),
+    
+    // Payment
+    payOrder: (id, data) => api.post(`/orders/${id}/pay`, data),
 };
 
 // ═══════════════════════════════════════════════════════

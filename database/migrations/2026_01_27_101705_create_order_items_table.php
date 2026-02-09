@@ -16,7 +16,12 @@ return new class extends Migration
             $table->decimal('unit_price', 10, 2);
             $table->integer('quantity')->default(1);
             $table->decimal('subtotal', 12, 2);
+            $table->decimal('tax_amount', 12, 2)->default(0);
+            $table->decimal('discount_amount', 12, 2)->default(0);
+            $table->decimal('total_amount', 12, 2);
+            $table->json('modifiers')->nullable();
             $table->text('notes')->nullable();
+            $table->timestamp('ready_at')->nullable();
             $table->enum('status', ['pending', 'sent', 'preparing', 'ready', 'served', 'cancelled'])->default('pending');
             $table->boolean('is_void')->default(false);
             $table->string('void_reason')->nullable();
